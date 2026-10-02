@@ -1,0 +1,12 @@
+import type { SourceEvidence } from '../domain/types.js';
+import { date, safeURL } from '../domain/format.js';
+import { Card, Badge } from './ui.js';
+import { Icon } from './Icon.js';
+import s from '../styles/pages.module.css';
+export function SourceCard({ source }: { source: SourceEvidence }) {
+  const url = safeURL(source.url);
+  const dated = source.freshness?.dated_activity_sources ?? [], identity = source.identity?.evidence ?? [];
+  return <Card className={s.padded}><div className={s.cardHeading}><h2>{source.title || 'Источник компании'}</h2><Badge tone={source.available ? 'info' : 'warning'}>{source.available ? 'Сохранённый материал' : source.identityVerified ? 'Источник реквизитов' : 'Ограниченное подтверждение'}</Badge></div><p className={s.muted}>Получен: {date(source.fetchedAt)} · опубликован: {date(source.publishedAt)} · обновлён: {date(source.updatedAt)}</p><p className={s.muted}>Связь с юридическим лицом: {source.identityVerified ? 'подтверждена источником' : 'не подтверждена независимо'}</p>{source.verificationScope && <p className={s.muted}>Проверено: {source.verificationScope}</p>}{source.scope && <p className={s.muted}>{source.scope}</p>}{source.excerpt ? <blockquote className={s.quote}>{source.excerpt}</blockquote> : <p className={s.muted}>Текст подтверждающего фрагмента не сохранён.</p>}{url ? <a href={url} target="_blank" rel="noopener noreferrer" className={s.inlineIconLabel}>Открыть источник<Icon name="external" size={16}/></a> : <p className={s.muted}>Ссылка на источник отсутствует.</p>}
+  {dated.length > 0 && <details className={s.sourceDetails}><summary><Icon name="chevron" size={16}/>Датированные публикации компании ({dated.length})</summary><p className={s.muted}>Дата относится к указанной публикации. Она не подтверждает исполненный договор или актуальность всего каталога.</p>{dated.map((item,index) => <div className={s.linkedSource} key={index}><strong>Опубликовано: {date(item.published_at)}</strong>{item.excerpt && <p>{item.excerpt}</p>}{safeURL(item.url) && <a href={safeURL(item.url)!} target="_blank" rel="noopener noreferrer">Открыть публикацию</a>}</div>)}</details>}
+  {identity.length > 0 && <details className={s.sourceDetails}><summary><Icon name="chevron" size={16}/>Основания связи с ИНН</summary>{identity.map((item,index) => <div className={s.linkedSource} key={index}>{item.excerpt && <p>{item.excerpt}</p>}{safeURL(item.url) && <a href={safeURL(item.url)!} target="_blank" rel="noopener noreferrer">Источник реквизитов</a>}</div>)}</details>}</Card>;
+}

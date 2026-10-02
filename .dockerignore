@@ -1,0 +1,16 @@
+.git
+**/node_modules
+**/dist
+**/__pycache__
+**/*.pyc
+.venv
+local
+output
+research
+*.zip
+*.sqlite*
+.env*
+**/.DS_Store
+product/frontend/archive
+product/frontend/tests
+product/qa

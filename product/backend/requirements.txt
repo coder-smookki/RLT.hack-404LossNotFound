@@ -1,0 +1,4 @@
+Django==5.2.17
+waitress==3.0.2
+psycopg[binary,pool]==3.3.6
+reportlab==5.0.1
