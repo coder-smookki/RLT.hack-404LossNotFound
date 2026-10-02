@@ -1,0 +1,109 @@
+name: rlt-product
+x-app: &app
+  build:
+    context: .
+    dockerfile: product/docker/Dockerfile
+    target: app
+    args:
+      APP_UID: ${APP_UID:-1000}
+      APP_GID: ${APP_GID:-1000}
+  restart: unless-stopped
+  init: true
+  read_only: true
+  tmpfs: [/tmp]
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  secrets: [app_db_password]
+  volumes:
+    - app-state:/state
+    - ./local/enrichment-all-suppliers-2026-10-02:/app/local/enrichment-all-suppliers-2026-10-02:ro
+  network_mode: service:runtime
+
+services:
+  db:
+    image: postgres:16.14-bookworm@sha256:64154d0babcb1741988719e703419af0382b19953706149f9872fbd0f438efa8
+    restart: unless-stopped
+    entrypoint: [/bin/sh, /docker-support/db-entrypoint.sh]
+    command: [postgres]
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+      POSTGRES_INITDB_ARGS: --auth-host=scram-sha-256
+    secrets: [postgres_password, app_db_password]
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+      - ./product/docker/db-entrypoint.sh:/docker-support/db-entrypoint.sh:ro
+      - ./product/docker/init-db.sh:/docker-entrypoint-initdb.d/10-app.sh:ro
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U postgres -d rlt_product && psql -U postgres -d rlt_product -Atqc 'SELECT 1' >/dev/null"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  runtime:
+    build:
+      context: .
+      dockerfile: product/docker/Dockerfile
+      target: runtime
+      args:
+        APP_UID: ${APP_UID:-1000}
+        APP_GID: ${APP_GID:-1000}
+    restart: unless-stopped
+    init: true
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    ports: ["127.0.0.1:${SUPPLY_DOCKER_PORT:-8903}:8902"]
+    volumes:
+      - ./local/history.sqlite:/app/local/history.sqlite:ro
+      - ./local/retrieval-router:/app/local/retrieval-router:ro
+      - ./local/pu-ranker:/app/local/pu-ranker:ro
+      - ./local/neighbor-ml-v3:/app/local/neighbor-ml-v3:ro
+      - ./local/next-cycle-v3:/app/local/next-cycle-v3:ro
+      - ./local/okpd-structure-v2:/app/local/okpd-structure-v2:ro
+      - ./local/release-s9-audit/release/runtime_release/artifacts/runtime_index.sqlite:/app/local/release-s9-audit/release/runtime_release/artifacts/runtime_index.sqlite:ro
+      - ./local/enrichment-36m:/app/local/enrichment-36m:ro
+      - ./local/enrichment-36m-dated-v2:/app/local/enrichment-36m-dated-v2:ro
+      - ./local/registry-enrichment-expansion:/app/local/registry-enrichment-expansion:ro
+      - ./local/colleague-enrichment-2026-10-02:/app/local/colleague-enrichment-2026-10-02:ro
+    healthcheck:
+      test: [CMD, python, -c, "import json,urllib.request; assert json.load(urllib.request.urlopen('http://127.0.0.1:8901/info'))['ready']"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+
+  web:
+    <<: *app
+    command: [web]
+    depends_on:
+      db: {condition: service_healthy}
+      runtime: {condition: service_healthy}
+    healthcheck:
+      test: [CMD, python, -c, "import json,urllib.request; assert json.load(urllib.request.urlopen('http://127.0.0.1:8902/api/v1/health'))['ok']"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  worker:
+    <<: *app
+    command: [worker]
+    depends_on:
+      web: {condition: service_healthy}
+      runtime: {condition: service_healthy}
+
+  source-worker:
+    <<: *app
+    command: [source-worker]
+    depends_on:
+      web: {condition: service_healthy}
+
+secrets:
+  postgres_password:
+    file: ./local/product-docker/secrets/postgres_password
+  app_db_password:
+    file: ./local/product-docker/secrets/app_db_password
+volumes:
+  pg-data:
+  app-state:

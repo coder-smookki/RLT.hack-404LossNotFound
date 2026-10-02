@@ -1,0 +1,2 @@
+/** Скачивает настоящий Blob; временный URL освобождается после старта загрузки. */
+export function downloadBlob(blob: Blob, filename: string): void { const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = filename.replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_'); document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000); }
