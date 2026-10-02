@@ -106,6 +106,16 @@ python3 -m venv .venv-backend
 SUPPLY_DATA_DIR="$PWD/local/test-backend" .venv-backend/bin/python product/backend/manage.py test api --noinput
 ```
 
+Проверка чтения данных и предметных свидетельств:
+
+```sh
+python3 -m venv .venv-runtime
+.venv-runtime/bin/pip install -r product/docker/runtime.requirements.lock
+PYTHONPATH=src .venv-runtime/bin/python -m unittest discover -s tests
+```
+
+Без приватного снимка источников пять интеграционных проверок реестра явно пропускаются; такой запуск не подтверждает импорт реальных источников.
+
 Блокировки и конкурентная обработка очередей дополнительно проверяются на PostgreSQL. Тесты SQLite не заменяют эту проверку. Для интерфейсных проверок с реальными рекомендациями требуется приватный комплект ресурсов и отдельный тестовый аккаунт.
 
 ## Ограничения
