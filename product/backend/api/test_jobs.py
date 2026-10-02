@@ -76,6 +76,28 @@ class QueueTests(TransactionTestCase):
                 with self.assertRaises(RuntimeFailure) as ctx:infer(self.query)
                 self.assertEqual(ctx.exception.code,'ENGINE_PROVENANCE_MISMATCH')
 
+    def test_repeat_upload_reuses_result_only_for_same_input_model_and_catalog(self):
+        enqueue(self.user,[self.query]);job=claim_job();first=snapshot(self.query);finish(job.pk,job.lease_token,result=first)
+        data,_=save_import(self.other,parse_import(pair()));again=Query.objects.get(pk=data['queryIds'][0])
+        info={'ready':True,'external_catalog':copy.deepcopy(first['external_catalog'])}
+        def runtime(path,*args,**kwargs):
+            if path=='/info':return info
+            raise AssertionError('model must not be called for an unchanged lot')
+        with patch('api.jobs.runtime_request',side_effect=runtime):
+            reused=infer(again)
+        self.assertEqual(reused['lots'],first['lots']);self.assertIn('cache',reused)
+        enqueue(self.other,[again]);job=claim_job();self.assertTrue(finish(job.pk,job.lease_token,result=reused))
+        job.refresh_from_db();again.refresh_from_db();self.assertIn('предыдущего расчёта',job.message)
+        self.assertEqual([r['company']['id'] for r in query_json(again)['recommendations']],[r['company']['id'] for r in query_json(Query.objects.get(pk=self.query.pk))['recommendations']])
+        info['external_catalog']={**info['external_catalog'],'version':'external-evidence-v6'}
+        calls=[]
+        def changed(path,*args,**kwargs):
+            calls.append(path);return info if path=='/info' else snapshot(again)
+        third=Query.objects.get(pk=save_import(self.user,parse_import(pair()))[0]['queryIds'][0])
+        with patch('api.jobs.runtime_request',side_effect=changed):
+            fresh=infer(third)
+        self.assertIn('/recommend',calls);self.assertNotIn('cache',fresh)
+
     def test_completed_results_companies_statistics_and_export_are_owned(self):
         enqueue(self.user,[self.query]);job=claim_job();finish(job.pk,job.lease_token,result=snapshot(self.query))
         response=self.ca.get('/api/v1/queries/'+str(self.query.pk));self.assertEqual(response.status_code,200)

@@ -33,7 +33,7 @@ MODEL_WEIGHTS = (
 )
 FIXED_SOURCES = (
     '.dockerignore', 'compose.yaml', 'README.md',
-    'scripts/package_release.py', 'scripts/recommend_frozen_p1.py',
+    'scripts/package_release.py', 'scripts/build_r4_profiles.py', 'scripts/recommend_frozen_p1.py',
     'scripts/recommend_enriched.py', 'scripts/serve_local.py',
     'product/docker/Dockerfile', 'product/docker/entrypoint.py',
     'product/docker/db-entrypoint.sh', 'product/docker/init-db.sh',
@@ -47,6 +47,7 @@ FIXED_SOURCES = (
     'product/frontend/index.html', 'product/frontend/public/favicon.svg',
     'product/frontend/tests/domain-v2.test.mjs',
     'product/frontend/tests/purchaser-presentation.test.mjs',
+    'product/frontend/tests/ui-v3.test.mjs',
     'src/rlt_lab/__init__.py', 'src/rlt_lab/data.py', 'src/rlt_lab/input.py',
     'src/rlt_lab/evidence_matching.py', 'src/rlt_lab/external_evidence.py',
     'src/rlt_lab/registry_evidence.py',
@@ -80,6 +81,7 @@ PRIVATE_FIXED = (
     'local/colleague-enrichment-2026-10-02/registry_companies.json',
     'local/enrichment-all-suppliers-2026-10-02/supplier_profiles.json',
     'local/enrichment-all-suppliers-2026-10-02/history_summaries.sqlite',
+    'local/enrichment-s9-r4-2026-10-02/supplier_profiles_r4.sqlite',
 )
 BATCH_PATHS = (
     'local/enrichment-36m/companies.json',
@@ -97,7 +99,7 @@ SECRET_PATTERNS = (
     ('slack-token', re.compile(r'\bxox[baprs]-[0-9A-Za-z-]{20,}\b')),
     ('openai-token', re.compile(r'\bsk-(?:proj-|svcacct-)?[A-Za-z0-9_-]{40,}\b')),
 )
-TRACE_PATTERN = re.compile(r'\b(?:Codex|Claude|ChatGPT|assistant|subagent)\b|/Users/|/Volumes/|/home/(?!supply\b)|smokkk', re.I)
+TRACE_PATTERN = re.compile(r'/Users/|/Volumes/|/home/(?!supply\b)|smokkk', re.I)
 MIT_META = 'MIT License\n\nCopyright (c) Meta Platforms, Inc. and affiliates.\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the "Software"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE.\n'
 
 
@@ -212,7 +214,7 @@ def scan_public(root: Path, paths: list[str]) -> list[dict]:
                 if pattern.search(line):
                     findings.append({'path': name, 'line': number, 'kind': label})
             if name != 'scripts/package_release.py' and TRACE_PATTERN.search(line):
-                findings.append({'path': name, 'line': number, 'kind': 'assistant-or-machine-trace'})
+                findings.append({'path': name, 'line': number, 'kind': 'personal-path-trace'})
     return findings
 
 

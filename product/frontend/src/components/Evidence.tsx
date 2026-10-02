@@ -1,3 +1,34 @@
+import React from 'react';
 import { evidenceLabel, itemStatus } from '../domain/recommendations.js';
-import React from 'react'; import { Alert, Badge, TextLink } from './ui.js'; import type { NeedItem, ItemEvidence, SourceEvidence } from '../domain/types.js'; import { date, safeURL } from '../domain/format.js'; import s from '../styles/pages.module.css';
-export function EvidencePanel({ item, evidence, source }: { item: NeedItem; evidence: ItemEvidence | undefined; source: SourceEvidence | undefined }) { const url = safeURL(source?.url); return <div className={s.evidencePanel}><Badge tone="accent" icon={false}>Позиция {item.id.startsWith('p') ? item.id.slice(1) : 'закупки'}</Badge><h2>{item.name}</h2><p className={s.muted}>ОКПД2 {item.okpd2 ?? 'не указан'}</p>{evidence?.kind && evidence.kind !== 'none' ? <><Badge tone={itemStatus(evidence) === 'conflict' ? 'error' : itemStatus(evidence) === 'match' ? 'info' : 'neutral'}>{evidenceLabel(evidence)}</Badge><p>{evidence.reason}</p><div className={s.sourceQuote}><strong>{source?.title ?? 'Источник не указан'}</strong><blockquote>«{source?.excerpt ?? evidence.reason}»</blockquote></div>{source?.scope && <p className={s.muted}>{source.scope}</p>}<div className={s.sourceMeta}><p>Дата сохранения: {date(source?.fetchedAt)}</p><p>Адрес страницы: {url ? <a href={url} target="_blank" rel="noopener noreferrer">{url}</a> : 'не указан'}</p><p>Связь с юридическим лицом: {source?.identityVerified ? 'подтверждена' : 'не подтверждена'}</p></div><Alert title="Что означает это основание" tone="warning">Совпадение отдельных явных характеристик не подтверждает соответствие всей позиции. Историческое наблюдение и сведения каталога требуют проверки наличия, комплектации и условий поставки.</Alert></> : <><Alert title="Сведений по этой позиции нет" tone="neutral">В доступных источниках нет основания для этой позиции. Это не означает, что компания не может её поставить.</Alert><p className={s.muted}>Уточните ассортимент и характеристики у компании.</p></>}</div>; }
+import { Badge } from './ui.js';
+import { Icon } from './Icon.js';
+import { sourceDates } from './SourceCard.js';
+import type { NeedItem, ItemEvidence, SourceEvidence } from '../domain/types.js';
+import { safeURL } from '../domain/format.js';
+import s from '../styles/pages.module.css';
+
+/** Тон метки основания: противоречие - предупреждение, остальное нейтрально; совпадение не окрашивается в «надёжный» зелёный. */
+export function evidenceTone(evidence?: ItemEvidence): 'warning' | 'info' | 'neutral' { const status = itemStatus(evidence); return status === 'conflict' ? 'warning' : evidence && evidence.kind !== 'none' ? 'info' : 'neutral'; }
+
+/**
+ * Основание по одной позиции закупки: позиция, вид основания, пояснение и подтверждающий фрагмент
+ * с датами и ссылкой. Отсутствие основания не трактуется как невозможность поставки.
+ */
+export function EvidencePanel({ item, number, evidence, source }: { item: NeedItem; number: number; evidence: ItemEvidence | undefined; source: SourceEvidence | undefined }) {
+  const url = safeURL(source?.url), found = evidence && evidence.kind !== 'none';
+  return <div className={s.evidencePanel}>
+    <span className={s.eyebrowSmall}>Позиция {number}{item.okpd2 ? ` · ОКПД2 ${item.okpd2}` : ''}</span>
+    <h3 className={s.evidenceTitle}>{item.name}</h3>
+    <Badge tone={evidenceTone(evidence)} icon={itemStatus(evidence) === 'conflict'}>{evidenceLabel(evidence)}</Badge>
+    {found ? <>
+      <p>{evidence!.reason}</p>
+      <div className={s.evidenceSource}>
+        <strong>{source?.title ?? 'Источник не указан'}</strong>
+        {source?.excerpt && <blockquote className={s.quote}>{source.excerpt}</blockquote>}
+        {source && <p className={s.muted}>{sourceDates(source).join(' · ')}{source.id.startsWith('history:') ? '' : ` · связь с ИНН ${source.identityVerified ? 'подтверждена' : 'не подтверждена'}`}</p>}
+        {url && <a href={url} target="_blank" rel="noopener noreferrer" className={s.externalLink}>Открыть источник<Icon name="external" size={15} /><span className={s.visuallyHidden}> (в новой вкладке)</span></a>}
+      </div>
+      <p className={s.muted}>Совпадение отдельных признаков не подтверждает всю позицию: уточните характеристики, наличие и условия поставки.</p>
+    </> : <p className={s.muted}>В доступных источниках основания для этой позиции нет. Это не значит, что компания не может её поставить - уточните у компании.</p>}
+  </div>;
+}

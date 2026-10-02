@@ -16,4 +16,9 @@ export function Link({ to, children, className, title, onClick, ...rest }: { to:
 }
 export function useParams() { const current = useLocation(); return new URL(current, getRouterOrigin()); }
 export function updateParams(values: Record<string, string | undefined>, replace = true) { const url = new URL(getRouterURL(), getRouterOrigin()); for (const [k, v] of Object.entries(values)) v == null || v === '' ? url.searchParams.delete(k) : url.searchParams.set(k, v); navigate(url.pathname + url.search, { replace, scroll: false }); }
-export function PageFocus({ title }: { title: string }) { const current = useLocation().split('?')[0]; useEffect(() => { document.title = `${title} - Подбор контрагентов`; }, [title]); useEffect(() => { const t = setTimeout(() => document.querySelector<HTMLElement>('h1')?.focus({ preventScroll: true }), 30); return () => clearTimeout(t); }, [current]); return null; }
+let firstPath: string | null = null;
+/**
+ * Обновляет заголовок вкладки и после перехода внутри приложения переводит фокус на h1 страницы.
+ * На первой загрузке фокус не перемещается, чтобы первый Tab попадал на ссылку «Перейти к содержимому».
+ */
+export function PageFocus({ title }: { title: string }) { const current = useLocation().split('?')[0] ?? ''; useEffect(() => { document.title = `${title} - Подбор контрагентов`; }, [title]); useEffect(() => { if (firstPath === null) { firstPath = current; return; } if (firstPath === current && document.activeElement === document.body) return; firstPath = ''; const t = setTimeout(() => document.querySelector<HTMLElement>('h1')?.focus({ preventScroll: true }), 30); return () => clearTimeout(t); }, [current]); return null; }

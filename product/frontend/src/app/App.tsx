@@ -1,18 +1,47 @@
+import React, { Component, useEffect, type ReactNode } from 'react';
 import { AuthProvider, useAuth } from './auth.js';
+import { navigate, useParams, PageFocus } from './router.js';
+import { AppStore } from './store.js';
 import { Account, SignIn } from '../pages/Account.js';
-import { Loading, Failure } from '../components/ui.js';
-import React, { Component, type ReactNode } from 'react'; import { Layout } from '../components/Layout.js'; import { useParams } from './router.js';  import { AppStore } from './store.js'; import { Empty, ButtonLink, Toasts } from '../components/ui.js';
+import { Layout } from '../components/Layout.js';
+import { Empty, Button, ButtonLink, Toasts } from '../components/ui.js';
+import { Icon } from '../components/Icon.js';
 import { Home } from '../pages/Home.js'; import { Search } from '../pages/Search.js'; import { Review } from '../pages/Review.js'; import { Validation } from '../pages/Validation.js'; import { Queries } from '../pages/Queries.js'; import { Results } from '../pages/Results.js'; import { Lot } from '../pages/Lot.js'; import { Company } from '../pages/Company.js'; import { Compare } from '../pages/Compare.js'; import { Sources } from '../pages/Sources.js'; import { Analytics } from '../pages/Analytics.js'; import { Companies } from '../pages/Companies.js'; import { Export } from '../pages/Export.js'; import { Help } from '../pages/Help.js';
-class ErrorBoundary extends Component<{ children?: ReactNode }, { error: string | null }> { state = { error: null as string | null }; static getDerivedStateFromError(error: Error) { return { error: error.message }; } render() { return this.state.error ? <Empty title="Не удалось отобразить страницу" action={<button onClick={() => location.assign('/queries')}>Вернуться к запросам</button>}>Данные не соответствуют ожидаемому формату. {this.state.error}</Empty> : this.props.children; } }
+import s from '../styles/account.module.css';
+
+/** Перехватывает ошибку отрисовки страницы: пользователь видит понятный выход, технические детали уходят в консоль. */
+class ErrorBoundary extends Component<{ children?: ReactNode }, { failed: boolean }> {
+  state = { failed: false };
+  static getDerivedStateFromError() { return { failed: true }; }
+  componentDidCatch(error: Error) { console.error('[ui] render failure', error); }
+  render() { return this.state.failed ? <Empty icon="warning" title="Страницу не удалось показать" action={<><Button icon="refresh" onClick={() => location.reload()}>Обновить страницу</Button><ButtonLink to="/queries" secondary>Мои запросы</ButtonLink></>}>Сохранённые данные не изменились. Обновите страницу или вернитесь к списку запросов.</Empty> : this.props.children; }
+}
+
+function NotFound() { return <><PageFocus title="Страница не найдена" /><Empty level={1} icon="search" title="Страница не найдена" action={<><ButtonLink to="/">На главную</ButtonLink><ButtonLink to="/queries" secondary>Мои запросы</ButtonLink></>}>Адрес набран с ошибкой или страница больше не существует.</Empty></>; }
+
+const routes: [RegExp, () => ReactNode][] = [
+  [/^\/$/, () => <Home />], [/^\/search$/, () => <Search />], [/^\/search\/[^/]+\/review$/, () => <Review />], [/^\/imports\/[^/]+\/validation$/, () => <Validation />],
+  [/^\/queries$/, () => <Queries />], [/^\/queries\/[^/]+\/results$/, () => <Results />], [/^\/queries\/[^/]+\/items$/, () => <Lot />], [/^\/queries\/[^/]+\/compare$/, () => <Compare />],
+  [/^\/companies$/, () => <Companies />], [/^\/companies\/[^/]+$/, () => <Company />], [/^\/sources$/, () => <Sources />], [/^\/analytics$/, () => <Analytics />],
+  [/^\/exports$/, () => <Export />], [/^\/help$/, () => <Help />], [/^\/account$/, () => <Account />],
+];
+
 function RouterView() {
-const url = useParams(), p = url.pathname; let view: ReactNode;
-  if (p === '/' || p === '/login' || p === '/register') view = <Home />; else if (p === '/search') view = <Search />; else if (/^\/search\/[^/]+\/review$/.test(p)) view = <Review />; else if (/^\/imports\/[^/]+\/validation$/.test(p)) view = <Validation />; else if (p === '/queries') view = <Queries />; else if (/^\/queries\/[^/]+\/results$/.test(p)) view = <Results />; else if (/^\/queries\/[^/]+\/items$/.test(p)) view = <Lot />; else if (/^\/queries\/[^/]+\/compare$/.test(p)) view = <Compare />; else if (p === '/companies') view = <Companies />; else if (/^\/companies\/[^/]+$/.test(p)) view = <Company />; else if (p === '/sources') view = <Sources />; else if (p === '/analytics') view = <Analytics />; else if (p === '/exports') view = <Export />; else if (p === '/help') view = <Help />; else if (p === '/account') view = <Account />; else view = <Empty title="Страница не найдена" action={<ButtonLink to="/">На главную</ButtonLink>}>Проверьте адрес или вернитесь в рабочее пространство.</Empty>;
+  const p = useParams().pathname;
+  useEffect(() => { if (p === '/login' || p === '/register') navigate('/', { replace: true }); }, [p]);
+  const view = p === '/login' || p === '/register' ? <Home /> : routes.find(([pattern]) => pattern.test(p))?.[1]() ?? <NotFound />;
   return <Layout><ErrorBoundary key={p}>{view}</ErrorBoundary></Layout>;
 }
+
+/** Экран недоступности сервера до проверки сессии: причина и повтор без перезагрузки. */
+function ServerUnavailable({ message, onRetry }: { message: string; onRetry: () => void }) {
+  return <main className={s.statusPage}><PageFocus title="Сервер недоступен" /><div className={s.statusCard}><span className={s.statusIcon}><Icon name="warning" size={28} /></span><h1 tabIndex={-1}>Сервер недоступен</h1><p>{message}</p><p className={s.statusHint}>Проверьте подключение. Если приложение запущено локально, убедитесь, что контейнеры работают.</p><Button icon="refresh" onClick={onRetry}>Повторить</Button></div></main>;
+}
+
 function AuthenticatedApp() {
   const auth = useAuth();
-  if (auth.loading) return <div style={{ padding: 32 }}><Loading text="Проверяем сессию" /></div>;
-  if (auth.error) return <div style={{ padding: 32 }}><Failure error={Error(auth.error)} onRetry={auth.retry} /></div>;
+  if (auth.loading) return <main className={s.statusPage} aria-busy="true"><p className={s.statusHint} role="status">Проверяем сессию</p></main>;
+  if (auth.error) return <ServerUnavailable message={auth.error} onRetry={auth.retry} />;
   if (!auth.user) return <SignIn />;
   return <AppStore key={auth.user.id}><RouterView /><Toasts /></AppStore>;
 }

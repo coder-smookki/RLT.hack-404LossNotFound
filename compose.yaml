@@ -17,6 +17,7 @@ x-app: &app
   volumes:
     - app-state:/state
     - ./local/enrichment-all-suppliers-2026-10-02:/app/local/enrichment-all-suppliers-2026-10-02:ro
+    - ./local/enrichment-s9-r4-2026-10-02:/app/local/enrichment-s9-r4-2026-10-02:ro
   network_mode: service:runtime
 
 services:

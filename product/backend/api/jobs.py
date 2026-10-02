@@ -1,4 +1,5 @@
 """Durable database queue and a bounded loopback adapter to the accepted runtime."""
+import copy
 import csv
 import hashlib
 import io
@@ -132,18 +133,12 @@ def csv_bytes(columns, rows):
     return output.getvalue().encode('utf-8')
 
 
-def infer(query):
-    from rlt_lab.data import NOTICE_COLUMNS, ITEM_COLUMNS
-    files = {'notices': csv_bytes(NOTICE_COLUMNS, [query.raw_notice]), 'items': csv_bytes(ITEM_COLUMNS, query.raw_items)}
-    boundary = 'rlt-' + uuid.uuid4().hex
-    body = bytearray()
-    for field, payload in files.items():
-        body.extend((f'--{boundary}\r\nContent-Disposition: form-data; name="{field}"; filename="{field}.csv"\r\nContent-Type: text/csv\r\n\r\n').encode())
-        body.extend(payload)
-        body.extend(b'\r\n')
-    body.extend(f'--{boundary}--\r\n'.encode())
-    result = runtime_request('/recommend', bytes(body), 'multipart/form-data; boundary=' + boundary, timeout=300)
-    expected_hashes = {key: hashlib.sha256(value).hexdigest() for key, value in files.items()}
+def _verify_provenance(result, query, expected_hashes):
+    """Проверяет, что результат построен принятой моделью ровно по сохранённому входу закупки.
+
+    Raises:
+        RuntimeFailure: ответ не соответствует входу, ранжировщику или принятой версии модели.
+    """
     try:
         lot = result['lots'][0]
         if (result['ranker'] != 'neighbor35' or result['query_count'] != 1 or len(result['lots']) != 1
@@ -159,6 +154,60 @@ def infer(query):
         return result
     except (KeyError, TypeError, IndexError, ValueError) as exc:
         raise RuntimeFailure('ENGINE_PROVENANCE_MISMATCH', 'Ответ модели не соответствует сохранённому входу или принятой версии.', False) from exc
+
+
+def cached_result(query, expected_hashes):
+    """Возвращает готовый расчёт такого же лота, если входные данные, модель и каталог источников не менялись.
+
+    Совпадать должны SHA-256 обоих сформированных CSV, принятая версия признаков и модели, ранжировщик,
+    версия runtime, дата среза истории и полный отпечаток внешнего каталога из текущего `/info`.
+    Переиспользуется только детерминированный расчёт по публичным данным; флаги и выбор пользователя не копируются.
+
+    Args:
+        query: закупка, для которой выполняется подбор.
+        expected_hashes: SHA-256 файлов notices/items, которые были бы отправлены модели.
+    Returns:
+        Копия результата с отметкой `cache` или None, если повторный расчёт необходим.
+    """
+    try:
+        info = runtime_request('/info')
+    except RuntimeFailure:
+        return None
+    catalog = info.get('external_catalog')
+    if not info.get('ready') or not isinstance(catalog, dict):
+        return None
+    candidates = (Query.objects.filter(procurement__lotId=query.procurement.get('lotId'), completed_at__isnull=False)
+                  .exclude(pk=query.pk).order_by('-completed_at').only('result', 'completed_at')[:25])
+    for other in candidates:
+        result = other.result or {}
+        if result.get('input_sha256') != expected_hashes or result.get('external_catalog') != catalog:
+            continue
+        try:
+            reused = _verify_provenance(copy.deepcopy(result), query, expected_hashes)
+        except RuntimeFailure:
+            continue
+        reused['cache'] = {'reusedFromCompletedAt': other.completed_at.isoformat(),
+                           'basis': 'same_input_sha256_model_and_external_catalog'}
+        return reused
+    return None
+
+
+def infer(query):
+    from rlt_lab.data import NOTICE_COLUMNS, ITEM_COLUMNS
+    files = {'notices': csv_bytes(NOTICE_COLUMNS, [query.raw_notice]), 'items': csv_bytes(ITEM_COLUMNS, query.raw_items)}
+    expected_hashes = {key: hashlib.sha256(value).hexdigest() for key, value in files.items()}
+    reused = cached_result(query, expected_hashes)
+    if reused is not None:
+        return reused
+    boundary = 'rlt-' + uuid.uuid4().hex
+    body = bytearray()
+    for field, payload in files.items():
+        body.extend((f'--{boundary}\r\nContent-Disposition: form-data; name="{field}"; filename="{field}.csv"\r\nContent-Type: text/csv\r\n\r\n').encode())
+        body.extend(payload)
+        body.extend(b'\r\n')
+    body.extend(f'--{boundary}--\r\n'.encode())
+    result = runtime_request('/recommend', bytes(body), 'multipart/form-data; boundary=' + boundary, timeout=300)
+    return _verify_provenance(result, query, expected_hashes)
 
 
 def finish(job_id, token, result=None, failure=None):
@@ -179,7 +228,9 @@ def finish(job_id, token, result=None, failure=None):
         else:
             Query.objects.filter(pk=job.query_id, result_version='input-v1').update(
                 result=result, company_profiles=profiles, result_version='result-' + str(job.pk), completed_at=now)
-            job.status, job.message, job.finished_at = 'complete', 'Подбор завершён. Проверьте основания и характеристики.', now
+            job.status, job.finished_at = 'complete', now
+            job.message = ('Результат взят из предыдущего расчёта такого же лота: входные данные, модель и каталог источников не менялись.'
+                           if result.get('cache') else 'Подбор завершён. Проверьте основания и характеристики.')
             job.error_code = ''
             from .source_jobs import auto_enqueue
             transaction.on_commit(lambda query_id=job.query_id: auto_enqueue(query_id))

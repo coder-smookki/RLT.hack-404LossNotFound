@@ -1,12 +1,44 @@
 import type { SourceEvidence } from '../domain/types.js';
-import { date, safeURL } from '../domain/format.js';
-import { Card, Badge } from './ui.js';
+import { date, dateTime, safeURL } from '../domain/format.js';
+import { Disclosure } from './ui.js';
 import { Icon } from './Icon.js';
 import s from '../styles/pages.module.css';
+
+/**
+ * Даты источника с явным смыслом: дата публикации или выгрузки (если известна) отделена
+ * от времени, когда система получила страницу. Время получения не выдаётся за дату содержания.
+ */
+export function sourceDates(source: SourceEvidence): string[] {
+  const rows: string[] = [];
+  if (source.publishedAt) rows.push(`опубликовано ${date(source.publishedAt)}`);
+  else if (source.contentDate) rows.push(source.dateSemantics?.startsWith('registry_snapshot') ? `выгрузка реестра от ${date(source.contentDate)}` : `дата содержания ${date(source.contentDate)}`);
+  else rows.push('дата публикации неизвестна');
+  if (source.updatedAt) rows.push(`обновлено ${date(source.updatedAt)}`);
+  if (source.fetchedAt) rows.push(`получено системой ${dateTime(source.fetchedAt)}`);
+  return rows;
+}
+
+/** Что подтверждает источник: связь с ИНН и область подтверждения простыми словами. */
+function confirms(source: SourceEvidence): string {
+  if (source.id.startsWith('history:')) return 'Участие в закупке с похожими позициями. Исполнение договора не подтверждено.';
+  const parts = [source.identityVerified ? 'Связь с ИНН компании подтверждена источником.' : 'Связь с ИНН компании не подтверждена независимо.'];
+  if (source.scope === 'licensed_activity' || /лицензи/i.test(source.title)) parts.push('Подтверждает лицензируемый вид деятельности, а не конкретный товар.');
+  else if (source.scope && source.scope.length < 400 && !/^[a-z_]+$/.test(source.scope)) parts.push(source.scope);
+  return parts.join(' ');
+}
+
+/** Компактная запись источника: название, что подтверждено, даты, ссылка; фрагмент и связанные публикации раскрываются по запросу. */
 export function SourceCard({ source }: { source: SourceEvidence }) {
-  const url = safeURL(source.url);
-  const dated = source.freshness?.dated_activity_sources ?? [], identity = source.identity?.evidence ?? [];
-  return <Card className={s.padded}><div className={s.cardHeading}><h2>{source.title || 'Источник компании'}</h2><Badge tone={source.available ? 'info' : 'warning'}>{source.available ? 'Сохранённый материал' : source.identityVerified ? 'Источник реквизитов' : 'Ограниченное подтверждение'}</Badge></div><p className={s.muted}>Получен: {date(source.fetchedAt)} · опубликован: {date(source.publishedAt)} · обновлён: {date(source.updatedAt)}</p><p className={s.muted}>Связь с юридическим лицом: {source.identityVerified ? 'подтверждена источником' : 'не подтверждена независимо'}</p>{source.verificationScope && <p className={s.muted}>Проверено: {source.verificationScope}</p>}{source.scope && <p className={s.muted}>{source.scope}</p>}{source.excerpt ? <blockquote className={s.quote}>{source.excerpt}</blockquote> : <p className={s.muted}>Текст подтверждающего фрагмента не сохранён.</p>}{url ? <a href={url} target="_blank" rel="noopener noreferrer" className={s.inlineIconLabel}>Открыть источник<Icon name="external" size={16}/></a> : <p className={s.muted}>Ссылка на источник отсутствует.</p>}
-  {dated.length > 0 && <details className={s.sourceDetails}><summary><Icon name="chevron" size={16}/>Датированные публикации компании ({dated.length})</summary><p className={s.muted}>Дата относится к указанной публикации. Она не подтверждает исполненный договор или актуальность всего каталога.</p>{dated.map((item,index) => <div className={s.linkedSource} key={index}><strong>Опубликовано: {date(item.published_at)}</strong>{item.excerpt && <p>{item.excerpt}</p>}{safeURL(item.url) && <a href={safeURL(item.url)!} target="_blank" rel="noopener noreferrer">Открыть публикацию</a>}</div>)}</details>}
-  {identity.length > 0 && <details className={s.sourceDetails}><summary><Icon name="chevron" size={16}/>Основания связи с ИНН</summary>{identity.map((item,index) => <div className={s.linkedSource} key={index}>{item.excerpt && <p>{item.excerpt}</p>}{safeURL(item.url) && <a href={safeURL(item.url)!} target="_blank" rel="noopener noreferrer">Источник реквизитов</a>}</div>)}</details>}</Card>;
+  const url = safeURL(source.url), dated = source.freshness?.dated_activity_sources ?? [], identity = source.identity?.evidence ?? [];
+  return <article className={s.sourceItem}>
+    <div className={s.sourceHead}><h3>{source.title || 'Источник компании'}</h3>{url && <a href={url} target="_blank" rel="noopener noreferrer" className={s.externalLink}>Открыть<Icon name="external" size={15} /><span className={s.visuallyHidden}> (в новой вкладке)</span></a>}</div>
+    <p>{confirms(source)}</p>
+    <p className={s.muted}>{sourceDates(source).join(' · ')}</p>
+    {(source.excerpt || dated.length > 0 || identity.length > 0) && <Disclosure summary="Фрагмент и подробности">
+      {source.excerpt ? <blockquote className={s.quote}>{source.excerpt}</blockquote> : <p className={s.muted}>Текст фрагмента не сохранён.</p>}
+      {source.verificationScope && <p className={s.muted}>Проверено: {source.verificationScope}</p>}
+      {dated.length > 0 && <><h4 className={s.miniTitle}>Датированные публикации компании</h4><p className={s.muted}>Дата относится к публикации и не подтверждает исполненный договор или актуальность всего каталога.</p><ul className={s.plainList}>{dated.map((item, index) => <li key={index}>{date(item.published_at)}{item.excerpt ? ` - ${item.excerpt}` : ''} {safeURL(item.url) && <a href={safeURL(item.url)!} target="_blank" rel="noopener noreferrer">открыть</a>}</li>)}</ul></>}
+      {identity.length > 0 && <><h4 className={s.miniTitle}>Основание связи с ИНН</h4><ul className={s.plainList}>{identity.map((item, index) => <li key={index}>{item.excerpt}{safeURL(item.url) && <> <a href={safeURL(item.url)!} target="_blank" rel="noopener noreferrer">страница</a></>}</li>)}</ul></>}
+    </Disclosure>}
+  </article>;
 }

@@ -10,7 +10,7 @@
     "dev": "vite --host 127.0.0.1",
     "build": "tsc --noEmit && vite build",
     "typecheck": "tsc --noEmit",
-    "test": "node --experimental-strip-types --test tests/domain-v2.test.mjs tests/purchaser-presentation.test.mjs",
+    "test": "node --experimental-strip-types --test tests/domain-v2.test.mjs tests/purchaser-presentation.test.mjs tests/ui-v3.test.mjs",
     "preview": "vite preview --host 127.0.0.1"
   },
   "dependencies": {

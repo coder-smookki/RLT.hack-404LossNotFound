@@ -81,6 +81,24 @@ def _value(name, value):
     return value.strip() if value and value.strip() else None
 
 
+def _history_stats(value):
+    """Проверяет сводку исторических участий и побед из исходных данных закупок.
+
+    Args:
+        value: словарь с целыми lotCount и winnerLotCount или None.
+    Returns:
+        Нормализованная сводка либо None, если значения отсутствуют или противоречивы.
+    """
+    if not isinstance(value, dict):
+        return None
+    lots, wins = value.get('lotCount'), value.get('winnerLotCount')
+    if type(lots) is not int or type(wins) is not int or lots <= 0 or not 0 <= wins <= lots or lots > 10_000_000:
+        return None
+    return {'lotCount': lots, 'winnerLotCount': wins, 'period': _string(value.get('period'), 40) or '',
+            'source': _string(value.get('source'), 200) or 'Исходные данные закупок',
+            'scope': 'Победа в торгах не означает исполнение договора; учитываются только предоставленные исторические данные.'}
+
+
 def validate_profile(value, version, catalog_hash, generated_at):
     if not isinstance(value, dict) or not (inn := canonical_inn(value.get('inn'))):
         return None
@@ -120,6 +138,9 @@ def validate_profile(value, version, catalog_hash, generated_at):
         fields[name] = field
     verified = [name for name, field in fields.items() if field['status'] == 'verified']
     content = {'inn': inn, 'fields': fields, 'sources': sources}
+    stats = _history_stats(value.get('historyStats'))
+    if stats:
+        content['historyStats'] = stats
     digest = hashlib.sha256(json.dumps(content, sort_keys=True, ensure_ascii=False, separators=(',', ':')).encode()).hexdigest()
     return {**content, 'version': version, 'contentHash': digest, 'catalogHash': catalog_hash,
             'updatedAt': generated_at, 'profileStatus': 'verified_identity' if 'name' in verified else 'partial' if verified else 'pending',
@@ -178,16 +199,63 @@ def catalog():
         return value
 
 
-def offline_profiles(inns):
-    source = catalog()
+def _sidecar_path():
+    import os
+    configured = getattr(settings, 'COMPANY_PROFILE_SIDECAR', None) or os.environ.get('SUPPLY_COMPANY_PROFILE_SIDECAR')
+    return Path(configured) if configured else settings.REPO / 'local/enrichment-s9-r4-2026-10-02/supplier_profiles_r4.sqlite'
+
+
+def sidecar_profiles(inns):
+    """Читает профили R4 по ИНН из SQLite-приложения только для запрошенных компаний.
+
+    Файл открывается только для чтения; повреждённая или отсутствующая база не превращается
+    в подтверждённые сведения, а просто не даёт профилей. Каждый профиль проходит validate_profile.
+    Args:
+        inns: канонические ИНН.
+    Returns:
+        Словарь ИНН -> проверенный профиль.
+    """
+    import sqlite3
+    path, wanted = _sidecar_path(), [inn for inn in dict.fromkeys(inns) if inn]
+    if not wanted or not path.is_file():
+        return {}
+    try:
+        with sqlite3.connect(f'file:{path}?mode=ro&immutable=1', uri=True) as db:
+            meta = dict(db.execute('select key, value from metadata'))
+            if meta.get('schemaVersion') != 'supplier-profile-sidecar.v1':
+                raise ValueError('Invalid sidecar schema')
+            rows = []
+            for start in range(0, len(wanted), 500):
+                chunk = wanted[start:start + 500]
+                rows += db.execute('select inn, payload from profiles where inn in (%s)' % ','.join('?' * len(chunk)), chunk).fetchall()
+    except (sqlite3.Error, ValueError) as exc:
+        log.warning('company_profile_sidecar_unavailable type=%s', type(exc).__name__)
+        return {}
     profiles = {}
-    for raw_inn in inns:
-        inn = canonical_inn(raw_inn)
-        if not inn:
-            continue
-        known = source['profiles'].get(inn)
+    for inn, payload in rows:
+        try:
+            profile = validate_profile(json.loads(payload), meta.get('version'), meta.get('contentSha256'), meta.get('generatedAt'))
+        except (ValueError, TypeError):
+            profile = None
+        if profile and profile['inn'] == inn:
+            profiles[inn] = profile
+    return profiles
+
+
+def offline_profiles(inns):
+    """Профили из основного каталога; пробелы закрываются приложением R4 без перезаписи подтверждённых полей."""
+    source = catalog()
+    canonical = [inn for inn in map(canonical_inn, inns) if inn]
+    extra = sidecar_profiles(canonical)
+    profiles = {}
+    for inn in canonical:
+        known, added = source['profiles'].get(inn), extra.get(inn)
         if known:
             profile = copy.deepcopy(known)
+            if added and 'historyStats' in added and 'historyStats' not in profile:
+                profile['historyStats'] = added['historyStats']
+        elif added:
+            profile = added
         else:
             profile = validate_profile({'inn': inn, 'fields': {}, 'sources': []}, source['version'], source['hash'], source['generatedAt'])
         profile['catalogStatus'] = source['status']
@@ -242,7 +310,7 @@ def current_profiles(inns):
             ids = list(dict.fromkeys(previous.get('sourceIds', []) + [sid for v in fresh_activities for sid in v['sourceIds']]))
             fields['activities'] = {'value': values, 'status': 'verified', 'sourceIds': ids, 'observedAt': previous.get('observedAt')}
         if live_sources:
-            combined = {'inn': saved.inn, 'fields': fields, 'sources': base['sources'] + live_sources}
+            combined = {'inn': saved.inn, 'fields': fields, 'sources': base['sources'] + live_sources, 'historyStats': base.get('historyStats')}
             profile = validate_profile(combined, live['version'], base['catalogHash'], saved.checked_at.isoformat())
             if profile:
                 profile['catalogStatus'] = base['catalogStatus']

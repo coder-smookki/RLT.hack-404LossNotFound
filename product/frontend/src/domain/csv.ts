@@ -82,3 +82,78 @@ export function detectCSVKind(text: string): CSVKind {
   }
   throw new Error('Не удалось определить файл по колонкам. Нужны два CSV исходного формата: закупки и позиции. Проверьте формат в справке.');
 }
+
+export interface CSVFileProblem { title: string; detail: string; fix: string; repairedText?: string; }
+export interface CSVFileInfo { kind: CSVKind; rows: number; delimiter: ';' | ','; }
+
+/** Ошибка проверки файла с объяснением и способом исправления для показа рядом с загрузкой. */
+export class CSVFileError extends Error { readonly problem: CSVFileProblem; constructor(problem: CSVFileProblem) { super(problem.title + ' ' + problem.detail); this.name = 'CSVFileError'; this.problem = problem; } }
+
+/**
+ * Проверяет файл до загрузки по содержимому, а не по имени: размер, пустоту, признаки Excel/архива,
+ * кодировку UTF-8 и точный набор колонок одной из двух поддерживаемых схем.
+ * Исходные байты не изменяются - на сервер уходит тот же файл.
+ * @param bytes содержимое файла; @param maxBytes предел размера.
+ * @returns тип таблицы, число строк данных и разделитель.
+ * @throws CSVFileError с причиной и способом исправления.
+ */
+export function inspectCSVBytes(bytes: Uint8Array, maxBytes: number): CSVFileInfo {
+  const mb = (n: number) => (n / 1024 / 1024).toLocaleString('ru-RU', { maximumFractionDigits: 1 });
+  if (!bytes.length) throw new CSVFileError({ title: 'Файл пуст.', detail: 'В нём нет заголовков и строк.', fix: 'Выберите исходный CSV с данными.' });
+  if (bytes.length > maxBytes) throw new CSVFileError({ title: `Файл больше ${mb(maxBytes)} МБ.`, detail: `Размер файла ${mb(bytes.length)} МБ.`, fix: 'Разделите закупки на несколько загрузок: до 100 закупок и 10 000 позиций за раз.' });
+  const head = bytes.subarray(0, 8);
+  if ((head[0] === 0xff && head[1] === 0xfe) || (head[0] === 0xfe && head[1] === 0xff)) throw new CSVFileError({ title: 'Кодировка не UTF-8.', detail: 'Файл сохранён в UTF-16.', fix: 'Сохраните файл как «CSV UTF-8» и добавьте его снова.' });
+  if ((head[0] === 0x50 && head[1] === 0x4b) || (head[0] === 0xd0 && head[1] === 0xcf) || head.includes(0)) throw new CSVFileError({ title: 'Это не CSV.', detail: 'Похоже на файл Excel, архив или другой двоичный формат.', fix: 'Откройте таблицу и сохраните её как «CSV UTF-8 (разделитель - точка с запятой)».' });
+  let text: string;
+  try { text = new TextDecoder('utf-8', { fatal: true }).decode(bytes); }
+  catch { throw new CSVFileError({ title: 'Кодировка не UTF-8.', detail: 'Вероятно, файл сохранён в Windows-1251, поэтому русские буквы будут прочитаны неверно.', fix: 'Сохраните файл как «CSV UTF-8» в Excel или LibreOffice и добавьте его снова.' }); }
+  const header = describeCSVHeader(text);
+  if (!header.kind) {
+    const repaired = repairGluedHeader(text);
+    if (repaired) throw new CSVFileError({ title: 'Колонки в заголовке склеены.', detail: `Ячейка ${repaired.glued.map(g => `«${g}»`).join(', ')} содержит разделитель внутри кавычек, поэтому две колонки читаются как одна. Строки данных при этом корректны.`, fix: 'Можно исправить автоматически: изменится только первая строка (заголовок), все строки данных останутся без изменений. Или исправьте заголовок в исходном файле.', repairedText: repaired.text });
+    const near = header.nearest === 'items' ? 'позиций (ТРУ)' : 'закупок';
+    const parts = [header.missing.length ? `не хватает колонок: ${header.missing.join(', ')}` : '', header.unknown.length ? `лишние колонки: ${header.unknown.join(', ')}` : '', header.duplicate.length ? `повторяются: ${header.duplicate.join(', ')}` : ''].filter(Boolean).join('; ');
+    throw new CSVFileError({ title: 'Не удалось определить таблицу по колонкам.', detail: header.nearest ? `Больше всего похоже на файл ${near}: ${parts}.` : 'Заголовки не совпадают ни с файлом закупок, ни с файлом позиций.', fix: 'Используйте точные названия колонок из шаблона. Порядок колонок может быть любым.' });
+  }
+  let rows = 0; try { rows = Math.max(0, parseCSV(text, header.delimiter).length - 1); } catch { rows = 0; }
+  if (!rows) throw new CSVFileError({ title: 'В файле только заголовки.', detail: 'Строк с данными нет.', fix: 'Добавьте строки закупок или позиций и сохраните файл снова.' });
+  return { kind: header.kind, rows, delimiter: header.delimiter };
+}
+
+/** Сравнивает первую строку с двумя схемами и возвращает точное совпадение или ближайшую схему (по доле общих колонок) с расхождениями. */
+export function describeCSVHeader(text: string): { kind: CSVKind | null; nearest: CSVKind | null; delimiter: ';' | ','; missing: string[]; unknown: string[]; duplicate: string[] } {
+  let best: ReturnType<typeof describeCSVHeader> = { kind: null, nearest: null, delimiter: ';', missing: [], unknown: [], duplicate: [] }, bestScore = -1;
+  for (const delimiter of [';', ','] as const) {
+    let header: string[] = [];
+    try { header = (parseCSV(text.split(/\r?\n/, 1)[0] ?? '', delimiter)[0]?.cells ?? []).map(value => value.trim().replace(/^﻿/, '')); } catch { continue; }
+    for (const [kind, columns] of [['notices', NOTICE_COLUMNS], ['items', ITEM_COLUMNS]] as const) {
+      const missing = columns.filter(c => !header.includes(c)), unknown = header.filter(c => !columns.includes(c)), duplicate = [...new Set(header.filter((c, i) => header.indexOf(c) !== i))];
+      const matched = columns.length - missing.length, score = matched / (columns.length + unknown.length);
+      if (!missing.length && !unknown.length && !duplicate.length) return { kind, nearest: kind, delimiter, missing, unknown, duplicate };
+      if (score > bestScore && matched > 0) { bestScore = score; best = { kind: null, nearest: kind, delimiter, missing, unknown, duplicate }; }
+    }
+  }
+  return best;
+}
+
+/**
+ * Восстанавливает заголовок, в котором колонки склеены в одну ячейку из-за кавычек
+ * (например, «"reqnum;procedure_name"»). Срабатывает, только если после разделения ячеек получается
+ * точная поддерживаемая схема и каждая строка данных имеет ровно столько же полей.
+ * @returns текст с заменённой первой строкой и список склеенных ячеек либо null.
+ */
+export function repairGluedHeader(text: string): { text: string; glued: string[] } | null {
+  const body = text.replace(/^\uFEFF/, ''), bom = text.startsWith('\uFEFF') ? '\uFEFF' : '';
+  const end = body.search(/\r?\n/); if (end < 0) return null;
+  for (const delimiter of [';', ','] as const) {
+    let cells: string[]; try { cells = (parseCSV(body.slice(0, end), delimiter)[0]?.cells ?? []).map(c => c.trim()); } catch { continue; }
+    const glued = cells.filter(c => c.includes(delimiter)); if (!glued.length) continue;
+    const split = cells.flatMap(c => c.split(delimiter).map(x => x.trim()));
+    const exact = (columns: string[]) => split.length === columns.length && new Set(split).size === split.length && columns.every(c => split.includes(c));
+    if (!exact(NOTICE_COLUMNS) && !exact(ITEM_COLUMNS)) continue;
+    let rows: CSVRow[]; try { rows = parseCSV(body, delimiter).slice(1); } catch { continue; }
+    if (!rows.length || rows.some(r => r.cells.length !== split.length)) continue;
+    return { text: bom + split.map(c => `"${c}"`).join(delimiter) + body.slice(end), glued };
+  }
+  return null;
+}

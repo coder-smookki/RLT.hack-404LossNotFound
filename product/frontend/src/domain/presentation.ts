@@ -54,3 +54,34 @@ export function contactHref(contact: BusinessContact): string | undefined {
   if (contact.kind === 'phone' && /^[+\d\s()\-]+$/.test(contact.value)) return `tel:${contact.value.replace(/[^+\d]/g, '')}`;
   return undefined;
 }
+
+export interface EvidenceTag { label: string; tone: 'info' | 'warning' | 'neutral' | 'accent'; }
+export interface ItemCoverage { total: number; withEvidence: number; history: number; catalog: number; matched: number; conflicts: number; }
+
+/**
+ * Считает основания по позициям закупки без пересчёта рейтинга: сколько позиций имеют
+ * историческое или внешнее основание, сколько явных совпадений и противоречий характеристик.
+ * @param rec сохранённая рекомендация; @param total число позиций закупки.
+ */
+export function itemCoverage(rec: Recommendation, total: number): ItemCoverage {
+  const rows = rec.evidence.filter(e => e.kind !== 'none');
+  return { total, withEvidence: rows.length, history: rows.filter(e => e.kind === 'history').length, catalog: rows.filter(e => e.kind === 'catalog').length, matched: rec.evidence.filter(e => itemStatus(e) === 'match').length, conflicts: rec.evidence.filter(e => itemStatus(e) === 'conflict').length };
+}
+
+/**
+ * Короткие доказательные метки рекомендации. Каждая метка следует из сохранённых данных
+ * (вид основания, статус сравнения характеристик, лицензия), а не из балла или места в списке.
+ * Зелёный тон не используется: ни одна метка не означает надёжность компании.
+ * @param compact без общей метки «Нужно уточнить характеристики» (для списков, где она объяснена один раз).
+ */
+export function evidenceTags(rec: Recommendation, compact = false): EvidenceTag[] {
+  const tags: EvidenceTag[] = [], codes = new Set((rec.explanationCriteria ?? []).map(c => c.code));
+  const conflicts = rec.evidence.filter(e => itemStatus(e) === 'conflict').length, matched = rec.evidence.filter(e => itemStatus(e) === 'match').length;
+  if (rec.evidence.some(e => e.kind === 'history') || codes.has('similar_items') || codes.has('similar_procurements')) tags.push({ label: 'Есть опыт похожих закупок', tone: 'info' });
+  if (rec.evidence.some(e => e.kind === 'catalog') || codes.has('external_information')) tags.push({ label: 'Есть сведения в источниках компании', tone: 'info' });
+  if (codes.has('licensed_activity') || rec.company.sources.some(source => /лицензи/i.test(source.title))) tags.push({ label: 'Есть лицензия на вид деятельности', tone: 'accent' });
+  if (matched) tags.push({ label: `Есть подтверждённые совпадения характеристик: ${matched}`, tone: 'info' });
+  if (conflicts) tags.push({ label: `Противоречия в характеристиках: ${conflicts}`, tone: 'warning' });
+  if (!matched && !compact) tags.push({ label: 'Нужно уточнить характеристики', tone: 'neutral' });
+  return tags;
+}

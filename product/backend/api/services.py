@@ -49,8 +49,14 @@ def query_json(q, summary=False):
             'finishedAt': job.finished_at.isoformat() if job.finished_at else None,
             'message': job.message, 'errorCode': job.error_code or None}
     projection = result_projection(q.result)
-    attach_company_profiles([r['company'] for r in projection['recommendations'] + projection['externalCandidates']],
-                            q.company_profiles, summary=summary)
+    companies = [r['company'] for r in projection['recommendations'] + projection['externalCandidates']]
+    if summary:
+        # Список запросов показывает закупку и состояние; профили компаний отдаёт только детальный ответ.
+        for company in companies:
+            company.update(profileAtCalculation=None, currentProfile=None, sourceRefresh=None, historySummary=None,
+                           dueDiligence=None, displayName=company['name'], displayNameSource='result_snapshot')
+    else:
+        attach_company_profiles(companies, q.company_profiles)
     refresh_jobs = {r['company']['sourceRefresh']['id']: r['company']['sourceRefresh']
                     for r in projection['recommendations'] + projection['externalCandidates'] if r['company'].get('sourceRefresh')}
     refresh_counts = dict(Counter(job['status'] for job in refresh_jobs.values()))

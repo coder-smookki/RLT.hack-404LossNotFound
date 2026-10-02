@@ -1,54 +1,124 @@
-import { useState } from 'react';
-import { allRecommendations, evidenceLabel } from '../domain/recommendations.js';
-import { companyName, recommendationBasis, verifiedText, verifiedContacts, contactHref } from '../domain/presentation.js';
+import React, { useRef } from 'react';
+import { allRecommendations, evidenceLabel, itemStatus } from '../domain/recommendations.js';
+import { companyName, evidenceTags, itemCoverage } from '../domain/presentation.js';
 import { SourceCard } from '../components/SourceCard.js';
 import { useParams, updateParams } from '../app/router.js';
-import { ApiError, useResource } from '../api/client.js';
+import { useResource } from '../api/client.js';
 import { useApp } from '../app/store.js';
-import { PageHeader, Card, Tabs, Button, ButtonLink, TextLink, Badge, Alert, Empty, Loading, Failure, Dialog, Drawer } from '../components/ui.js';
-import { Icon } from '../components/Icon.js';
-import { EvidencePanel } from '../components/Evidence.js';
-import { CompanyChecks, CompanyCompleteness, CompanyExperience, CompanyHistoryTable } from '../components/CompanyDossier.js';
+import { PageHeader, Card, Tabs, Button, ButtonLink, TextLink, Badge, Empty, Loading, Failure, Input } from '../components/ui.js';
+import { EvidencePanel, evidenceTone } from '../components/Evidence.js';
+import { ChecksCard, ExperienceCard, CompanyHistoryTable, RequisitesCard } from '../components/CompanyDossier.js';
 import { CompanyRefresh } from '../components/CompanyRefresh.js';
-import { ROLE_LABEL, type Company as CompanyType, type QueryRecord } from '../domain/types.js';
-import { safeURL } from '../domain/format.js';
+import { compareURL } from '../components/QueryParts.js';
+import { ROLE_LABEL, type Company as CompanyType, type QueryRecord, type Recommendation, type SourceEvidence } from '../domain/types.js';
+import { date, plural } from '../domain/format.js';
+import { assessCandidate, formatScore, winStats } from '../domain/assessment.js';
+import { ScoreFactors } from '../components/Score.js';
+import { Icon } from '../components/Icon.js';
 import s from '../styles/pages.module.css';
+
+/** Причины, по которым компания в списке: метки, критерии из сохранённого объяснения и покрытие позиций. */
+function WhyCard({ rec, total, onItems }: { rec: Recommendation; total: number; onItems: () => void }) {
+  const cover = itemCoverage(rec, total);
+  return <Card className={s.padded}>
+    <h2>Почему компания в списке</h2>
+    <ul className={s.tags} aria-label="Основания">{evidenceTags(rec).map(tag => <li key={tag.label}><Badge tone={tag.tone} icon={tag.tone === 'warning'}>{tag.label}</Badge></li>)}</ul>
+    {rec.explanationSummary && <p>{rec.explanationSummary}</p>}
+    {rec.explanationCriteria?.length ? <ul className={s.criteria}>{rec.explanationCriteria.map((c, i) => <li key={`${c.code}-${i}`} className={c.status === 'conflict' ? s.criterionConflict : undefined}><strong>{c.label}</strong>{c.basis && <span className={s.muted}>{c.basis}</span>}</li>)}</ul> : null}
+    <div className={s.coverRow}><div><span className={s.coverNumber}>{cover.withEvidence}<span> из {cover.total}</span></span><span className={s.muted}>{plural(cover.total, ['позиции', 'позиций', 'позиций'])} с основанием{cover.history ? ` · история ${cover.history}` : ''}{cover.catalog ? ` · источники компании ${cover.catalog}` : ''}{cover.conflicts ? ` · противоречий ${cover.conflicts}` : ''}</span></div><Button small variant="secondary" onClick={onItems}>Основания по позициям</Button></div>
+    {rec.explanationNotes?.length ? <ul className={s.notes}>{rec.explanationNotes.map((n, i) => <li key={i}>{n}</li>)}</ul> : null}
+  </Card>;
+}
+
+/**
+ * Подробный анализ кандидата: оценка обоснованности по составляющим, сильные стороны,
+ * риски и пробелы, совпадение опыта с категориями закупки. Все выводы следуют из сохранённых данных.
+ */
+function AnalysisCard({ rec, query }: { rec: Recommendation; query: QueryRecord }) {
+  const a = assessCandidate(rec, query.procurement.items), stats = winStats(rec), history = rec.company.historySummary;
+  return <Card className={s.padded} label="Анализ контрагента">
+    <div className={s.sectionHead}><h2>Анализ контрагента</h2><span className={s.muted}>Место у алгоритма: № {rec.rank} {rec.company.origin === 'history' ? 'в истории закупок' : 'во внешних источниках'}</span></div>
+    <div className={s.analysisGrid}>
+      <div className={s.stackSm}>
+        <div className={s.analysisScore}><strong>{formatScore(a.score)}</strong><span className={s.muted}>из 10</span><Badge tone={a.level.tone} icon={false}>{a.level.label}</Badge></div>
+        <p className={s.muted}>Оценка обоснованности: насколько кандидат подтверждён данными. Отсутствующие сведения дают 0 баллов по своей составляющей, поэтому кандидат без данных оценивается ниже. Это не вероятность поставки и не проверка надёжности.</p>
+        <ScoreFactors assessment={a} />
+      </div>
+      <div className={s.analysisLists}>
+        {a.strengths.length > 0 && <div><h3 className={s.miniTitle}>Сильные стороны</h3><ul className={s.strengthList}>{a.strengths.map(t => <li key={t}><Icon name="check" size={16} /><span>{t}</span></li>)}</ul></div>}
+        <div><h3 className={s.miniTitle}>Риски и пробелы</h3><ul className={s.riskList}>{a.gaps.map(t => <li key={t}><Icon name="warning" size={16} /><span>{t}</span></li>)}</ul></div>
+        <div><h3 className={s.miniTitle}>Опыт и эта закупка</h3><ul className={s.plainList}>
+          <li>{history?.lotCount || stats?.lotCount ? `Участий в закупках: ${history?.lotCount ?? stats?.lotCount}${stats ? `, побед в торгах: ${stats.winnerLotCount}` : ''}.` : 'Участий в предоставленной истории нет.'}</li>
+          {a.monthsSinceLastSeen !== null && <li>Последнее участие {date(history?.lastSeen)} ({a.monthsSinceLastSeen} мес. назад).</li>}
+          <li>{a.categoryMatches.length ? `Категории закупки в её истории: ${a.categoryMatches.map(c => `${c.code} (${c.lotCount})`).join(', ')}.` : 'Категории ОКПД2 этой закупки в её истории не встречаются.'}</li>
+        </ul></div>
+      </div>
+    </div>
+  </Card>;
+}
+
+const FILTERS = [{ id: 'all', label: 'Все' }, { id: 'found', label: 'С основанием' }, { id: 'conflict', label: 'Противоречия' }, { id: 'none', label: 'Без основания' }] as const;
+
+/** Основания по позициям: фильтр и поиск по списку позиций, панель с основанием выбранной позиции. */
+function ItemsTab({ company, query, rec }: { company: CompanyType; query: QueryRecord; rec?: Recommendation }) {
+  const url = useParams().searchParams, filter = url.get('filter') ?? 'all', search = url.get('find') ?? '', panel = useRef<HTMLDivElement>(null);
+  const items = query.procurement.items, byItem = new Map((rec?.evidence ?? []).map(e => [e.itemId, e]));
+  const rows = items.map((item, index) => ({ item, index, ev: byItem.get(item.id) })).filter(({ item, ev }) => (filter === 'all' || (filter === 'found' && ev && ev.kind !== 'none') || (filter === 'conflict' && itemStatus(ev) === 'conflict') || (filter === 'none' && (!ev || ev.kind === 'none'))) && (!search || item.name.toLowerCase().includes(search.toLowerCase())));
+  const current = rows.find(r => r.item.id === url.get('item')) ?? rows[0];
+  const sources = new Map<string, SourceEvidence>([...company.sources, ...(company.currentProfile?.sources ?? [])].map(src => [src.id, src]));
+  const count = (id: string) => id === 'all' ? items.length : items.filter(i => { const ev = byItem.get(i.id); return id === 'found' ? ev && ev.kind !== 'none' : id === 'conflict' ? itemStatus(ev) === 'conflict' : !ev || ev.kind === 'none'; }).length;
+  if (!rec) return <Empty title="Компания не входит в результат этой закупки" icon="search">Основания по позициям показываются только для кандидатов выбранной закупки.</Empty>;
+  return <div className={s.evidenceLayout}>
+    <Card as="div" className={s.itemPicker}>
+      <div className={s.itemPickerHead}>
+        <div className={s.chips} role="group" aria-label="Фильтр позиций">{FILTERS.map(f => <button key={f.id} type="button" className={s.chip} aria-pressed={filter === f.id} onClick={() => updateParams({ filter: f.id === 'all' ? undefined : f.id, item: undefined })}>{f.label} <span>{count(f.id)}</span></button>)}</div>
+        <Input label="Поиск позиции" hideLabel type="search" icon="search" placeholder="Найти позицию" value={search} onChange={v => updateParams({ find: v || undefined, item: undefined })} />
+      </div>
+      {rows.length ? <ul className={s.itemOptions} aria-label="Позиции закупки">{rows.map(({ item, index, ev }) => <li key={item.id}><button type="button" aria-current={current?.item.id === item.id ? 'true' : undefined} onClick={() => { updateParams({ item: item.id }); if (matchMedia('(max-width: 1023px)').matches) requestAnimationFrame(() => panel.current?.focus()); }}><span className={s.itemNo}>{index + 1}</span><span className={s.itemOptionText}><span>{item.name}</span><Badge tone={evidenceTone(ev)} icon={itemStatus(ev) === 'conflict'}>{evidenceLabel(ev)}</Badge></span></button></li>)}</ul> : <p className={s.emptyInline}>Позиций по этому условию нет.</p>}
+    </Card>
+    <Card as="div" className={s.evidenceCard}><div ref={panel} tabIndex={-1} className={s.panelFocus} aria-live="polite">{current ? <EvidencePanel item={current.item} number={current.index + 1} evidence={current.ev} source={current.ev?.sourceId ? sources.get(current.ev.sourceId) : undefined} /> : <p className={s.emptyInline}>Выберите позицию слева.</p>}</div></Card>
+  </div>;
+}
+
+/**
+ * Карточка компании в контексте закупки: причины попадания в список и покрытие позиций, реквизиты
+ * с источниками, проверки «не проверено», опыт участия; отдельные вкладки для оснований, источников и истории.
+ */
 export function Company() {
-  const url = useParams(), id = url.pathname.split('/')[2] ?? '', queryId = url.searchParams.get('queryId'), tab = url.searchParams.get('tab') ?? 'overview';
-  const company = useResource<CompanyType>(`/companies/${id}${queryId ? `?queryId=${encodeURIComponent(queryId)}` : ''}`), qr = useResource<QueryRecord>(queryId ? `/queries/${queryId}` : null), app = useApp();
-  const [roleOpen, setRoleOpen] = useState(false), [drawer, setDrawer] = useState(false);
-  if (company.loading || qr.loading) return <Loading/>;
-  if (company.error instanceof ApiError && company.error.status === 404) return <><PageHeader title="Карточка контрагента"/><Empty title="Профиль пока недоступен" icon="building" action={<ButtonLink to="/companies">К контрагентам</ButtonLink>}>Компания не найдена в результатах вашего аккаунта. Откройте её из своей закупки.</Empty></>;
-  if (company.error) return <Failure error={company.error} onRetry={company.reload}/>;
-  if (qr.error) return <Failure error={qr.error} onRetry={qr.reload}/>;
+  const url = useParams(), id = decodeURIComponent(url.pathname.split('/')[2] ?? ''), queryId = url.searchParams.get('queryId'), tab = url.searchParams.get('tab') ?? 'overview';
+  const company = useResource<CompanyType>(`/companies/${encodeURIComponent(id)}${queryId ? `?queryId=${encodeURIComponent(queryId)}` : ''}`), qr = useResource<QueryRecord>(queryId ? `/queries/${queryId}` : null), app = useApp();
+  if (company.loading || qr.loading) return <Loading text="Загружаем карточку компании" rows={4} />;
+  if (company.error) return <Failure error={company.error} onRetry={company.reload} back={queryId ? { to: `/queries/${queryId}/results`, label: 'К кандидатам закупки' } : { to: '/companies', label: 'К списку компаний' }} />;
+  if (qr.error) return <Failure error={qr.error} onRetry={qr.reload} />;
   if (!company.data) return null;
-  const c = company.data, q = qr.data, rec = q ? allRecommendations(q).find(row => row.company.id === c.id) : undefined, items = q?.procurement.items ?? [];
-  const currentItem = items.find(item => item.id === url.searchParams.get('item')) ?? items[0], ev = rec?.evidence.find(e => e.itemId === currentItem?.id), source = c.sources.find(source => source.id === ev?.sourceId);
-  const selected = q ? app.selected(q).includes(c.id) : false, name = companyName(c), basis = rec ? recommendationBasis(rec) : null;
-  const title = tab === 'items' ? 'Основания по позициям' : tab === 'sources' ? 'Источники компании' : tab === 'history' ? 'История участия' : name;
-  const website = verifiedText(c, 'website') ?? c.website, description = verifiedText(c, 'description');
-  const fields = [['ИНН', c.inn ?? 'Не указан'], ['ОГРН', verifiedText(c, 'ogrn') ?? 'Не подтверждён'], ['КПП', verifiedText(c, 'kpp') ?? c.kpp ?? 'Не найден'], ['Сайт', website ?? 'Не найден'], ['Регион', verifiedText(c, 'region') ?? c.region ?? 'Не установлен']];
-  const itemPanel = currentItem ? <EvidencePanel item={currentItem} evidence={ev} source={source}/> : null;
-  const profileSources = c.currentProfile?.sources ?? [];
-  const contacts = verifiedContacts(c);
-  return <><PageHeader title={title} subtitle={q ? `${tab === 'overview' ? 'Для закупки' : name + ' · закупка'} ${q.procurement.lotId} · ${q.procurement.subject}` : 'Доступные сведения о компании и их источники.'} actions={q && rec ? <Button variant={selected ? 'secondary' : 'primary'} icon={selected ? 'check' : 'bookmark'} onClick={() => app.toggle(q, c.id)}>{selected ? 'В подборке' : 'Добавить в подборку'}</Button> : undefined}/>
-    <Tabs value={tab} items={[{ id: 'overview', label: 'О компании' }, { id: 'items', label: 'По позициям' }, { id: 'sources', label: 'Источники' }, { id: 'history', label: 'История участия' }]} onChange={value => updateParams({ tab: value, item: undefined })}/>
-    {tab === 'overview' ? <div className={s.companyGrid}><div className={s.verticalCards}>
-      <Card className={s.padded}><h2>Что известно о компании</h2><p className={s.profileSummary}>{description ?? 'Описание деятельности пока не подтверждено. Ниже показаны доступные реквизиты и сведения.'}</p><dl className={s.description}>{fields.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{label === 'Сайт' && safeURL(value) ? <a href={safeURL(value)!} target="_blank" rel="noopener noreferrer">{value}</a> : value}</dd></div>)}</dl>{c.currentProfile && <p className={s.profileStatus}>{c.currentProfile.completeness.verifiedFields > 0 ? 'Есть сведения с подтверждающими источниками.' : 'Сведения о компании ещё не подтверждены.'}</p>}<div className={s.sectionGap}><TextLink icon="link" onClick={() => updateParams({ tab: 'sources' })}>Посмотреть источники сведений</TextLink></div></Card>
-      <Card className={s.padded}><h2>Деловые контакты</h2>{contacts.length ? <><ul className={s.contactsList}>{contacts.map((contact, index) => { const sources = profileSources.filter(source => contact.sourceIds.includes(source.id)); return <li key={`${contact.kind}-${index}`}><span className={s.muted}>{contact.kind === 'email' ? 'Электронная почта' : contact.kind === 'phone' ? 'Телефон' : 'Контакт'}</span>{contactHref(contact) ? <a href={contactHref(contact)}>{contact.value}</a> : <strong>{contact.value}</strong>}{sources.map(source => safeURL(source.url) ? <a className={s.contactSource} key={source.id} href={safeURL(source.url)!} target="_blank" rel="noopener noreferrer">Источник контакта</a> : <span className={s.contactSource} key={source.id}>{source.title}</span>)}</li>; })}</ul><p className={s.muted}>Контакты опубликованы в источниках компании. Доступность телефона и доставку писем мы не проверяли.</p></> : <p className={s.muted}>Контакты с подтверждённым источником пока не найдены.</p>}</Card>
-      <Card className={s.padded}><h2>Роль компании</h2><Badge tone={c.role.role === 'unknown' ? 'neutral' : 'accent'} icon={false}>{c.role.role === 'unknown' ? 'Пока не установлена' : ROLE_LABEL[c.role.role]}</Badge><p className={s.muted}>{c.role.verified ? 'Есть подтверждающий источник.' : 'Участие в закупках само по себе не определяет производителя или продавца.'}</p><TextLink icon="info" onClick={() => setRoleOpen(true)}>На чём основана роль</TextLink></Card>
-      <CompanyExperience history={c.historySummary}/>
-      <CompanyChecks company={c}/>
-    </div><div className={s.verticalCards}>
-      <Card className={s.padded}><h2>Почему предложена</h2>{rec && q && basis ? <><p className={s.listPosition}>№ {rec.rank} в своём списке</p><h3>{basis.title}</h3><p className={s.reasonText}>{basis.detail}</p>{rec.explanationCriteria?.length ? <ul className={s.basisList}>{rec.explanationCriteria.map((criterion, index) => <li key={`${criterion.code}-${index}`}><strong>{criterion.label}</strong>{criterion.basis && <p>{criterion.basis}</p>}{criterion.status === 'conflict' && <Badge tone="warning">Есть противоречие</Badge>}</li>)}</ul> : null}<p className={s.muted}>{basis.caution}</p><TextLink onClick={() => updateParams({ tab: 'items' })} icon="arrow">Проверить позиции закупки</TextLink></> : <><p className={s.muted}>Связь компании с потребностью показывается в конкретной закупке.</p><ButtonLink to="/queries" secondary>Выбрать закупку</ButtonLink></>}</Card>
-      <Card className={s.padded}><h2>Что уточнить перед обращением</h2><ul className={s.checkList}>{['Точные товары, услуги и характеристики', 'Наличие, количество и сроки', 'Возможность исполнить все позиции закупки'].map(text => <li key={text}><Icon name="warning" size={18}/><span>{text}</span></li>)}</ul></Card>
-      <CompanyCompleteness company={c}/>
-      {q && <CompanyRefresh queryId={q.id} inn={c.inn} initialJob={c.sourceRefresh} onUpdated={() => { company.reload(); qr.reload(); }}/>}
-    </div></div> : tab === 'items' ? q && currentItem ? <div className={s.evidenceGrid}><Card className={s.itemList}><h2>Все позиции · {items.length}</h2>{items.map(item => { const evidence = rec?.evidence.find(e => e.itemId === item.id); return <button type="button" key={item.id} aria-pressed={item.id === currentItem.id} className={item.id === currentItem.id ? s.itemActive : ''} onClick={() => updateParams({ item: item.id })}><strong>{item.name}</strong><span>{evidenceLabel(evidence)}</span></button>; })}</Card><Card>{itemPanel}<div className={s.paddedFooter}><TextLink icon="external" onClick={() => setDrawer(true)}>Развернуть основание</TextLink></div></Card></div> : <Empty title="Выберите закупку" action={<ButtonLink to="/queries">Мои запросы</ButtonLink>}>Основания по позициям доступны для конкретной закупки.</Empty>
-      : tab === 'sources' ? <div className={s.verticalCards}>{profileSources.length > 0 && <><h2>Сведения о компании</h2>{profileSources.map(source => <SourceCard key={`profile-${source.id}`} source={source}/>)}</>}{c.sources.length ? <><h2>Основания сохранённого подбора</h2>{c.sources.map(source => <SourceCard key={source.id} source={source}/>)}</> : !profileSources.length && <Empty title="Материалы не сохранены" icon="link">Подтверждающих страниц пока нет. История участия, если доступна, находится на соседней вкладке.</Empty>}</div>
-      : <CompanyHistoryTable company={c}/>}
-    <div className={s.pageFooter}><TextLink icon="back" to={q ? `/queries/${q.id}/results` : '/companies'}>{q ? 'К контрагентам закупки' : 'К списку контрагентов'}</TextLink></div>
-    {roleOpen && <Dialog title="Основание роли компании" onClose={() => setRoleOpen(false)}><Badge tone={c.role.verified ? 'success' : 'neutral'}>{c.role.verified ? 'Подтверждена источником' : 'Нужно уточнить'}</Badge><p>{c.role.basis}</p><p className={s.muted}>{c.role.scope}</p><Alert title="Роль не подтверждает весь ассортимент">Даже производитель может не выпускать конкретный товар из вашей закупки.</Alert></Dialog>}
-    {drawer && currentItem && <Drawer title={`Основание · ${currentItem.name}`} onClose={() => setDrawer(false)}>{itemPanel}</Drawer>}
+  const c = company.data, q = qr.data, rec = q ? allRecommendations(q).find(row => row.company.id === c.id) : undefined;
+  const selected = q ? app.selected(q) : [], isSelected = selected.includes(c.id), name = companyName(c);
+  const channel = c.origin === 'history' ? 'из истории закупок' : 'из внешних источников';
+  const profileSources = c.currentProfile?.sources ?? [], calcSources = c.sources.filter(src => !src.id.startsWith('history:')), historySources = c.sources.filter(src => src.id.startsWith('history:'));
+  const goItems = () => updateParams({ tab: 'items' });
+  return <>
+    <PageHeader eyebrow={q ? `Кандидат для лота ${q.procurement.lotId}${rec ? ` · № ${rec.rank} ${channel}` : ''}` : `Компания ${channel}`} title={name} subtitle={`ИНН ${c.inn ?? 'не указан'}${c.role.verified && c.role.role !== 'unknown' ? ` · ${ROLE_LABEL[c.role.role]} (подтверждено источником)` : ''}`}
+      actions={q && rec ? <><Button variant={isSelected ? 'secondary' : 'primary'} icon={isSelected ? 'check' : 'compare'} onClick={() => app.toggle(q, c.id)}>{isSelected ? 'Выбрана для сравнения' : 'Выбрать для сравнения'}</Button>{isSelected && selected.length >= 2 && <ButtonLink secondary to={compareURL(q, selected)}>Сравнить ({selected.length})</ButtonLink>}</> : undefined} />
+    <Tabs label="Разделы карточки" value={tab} onChange={value => updateParams({ tab: value === 'overview' ? undefined : value, item: undefined, filter: undefined, find: undefined })} items={[{ id: 'overview', label: 'Обзор' }, ...(q ? [{ id: 'items', label: 'По позициям', count: rec ? itemCoverage(rec, q.procurement.items.length).withEvidence : 0 }] : []), { id: 'sources', label: 'Источники', count: profileSources.length + calcSources.length }, { id: 'history', label: 'История участия' }]} />
+    {tab === 'overview' ? <>{rec && q && <div className={s.analysisBlock}><AnalysisCard rec={rec} query={q} /></div>}<div className={s.companyGrid}>
+      <div className={s.stack}>
+        {rec && q ? <WhyCard rec={rec} total={q.procurement.items.length} onItems={goItems} /> : <Card className={s.padded}><h2>Связь с закупкой</h2><p className={s.muted}>Основания показываются в контексте конкретной закупки. Откройте компанию из результатов подбора.</p><div><ButtonLink small secondary to="/queries">Мои запросы</ButtonLink></div></Card>}
+        <ExperienceCard history={c.historySummary} onOpen={() => updateParams({ tab: 'history' })} />
+      </div>
+      <div className={s.stack}>
+        <RequisitesCard company={c} processedAt={q?.processedAt} />
+        <ChecksCard company={c} />
+        {q && <CompanyRefresh queryId={q.id} inn={c.inn} initialJob={c.sourceRefresh} onUpdated={() => { company.reload(); }} />}
+      </div>
+    </div></>
+      : tab === 'items' && q ? <ItemsTab company={c} query={q} rec={rec} />
+      : tab === 'sources' ? <div className={s.stack}>
+        {profileSources.length > 0 && <section aria-labelledby="src-current"><h2 id="src-current" className={s.groupTitle}>Текущие сведения о компании</h2><Card as="div" className={s.sourceList}>{profileSources.map(src => <SourceCard key={`p-${src.id}`} source={src} />)}</Card></section>}
+        {calcSources.length > 0 && <section aria-labelledby="src-calc"><h2 id="src-calc" className={s.groupTitle}>Основания на момент расчёта</h2><Card as="div" className={s.sourceList}>{calcSources.map(src => <SourceCard key={src.id} source={src} />)}</Card></section>}
+        {historySources.length > 0 && <section aria-labelledby="src-hist"><h2 id="src-hist" className={s.groupTitle}>Закупки из истории в расчёте: {historySources.length}</h2><p className={s.muted}>Участие в закупках с похожими позициями. Исполнение договора не подтверждено. <TextLink onClick={() => updateParams({ tab: 'history' })}>Открыть историю участия</TextLink></p></section>}
+        {!profileSources.length && !calcSources.length && !historySources.length && <Empty title="Источники не сохранены" icon="link">Подтверждающих страниц для этой компании пока нет.</Empty>}
+      </div>
+      : <CompanyHistoryTable company={c} />}
+    <div className={s.belowCard}><TextLink icon="back" to={q ? `/queries/${q.id}/results` : '/companies'}>{q ? 'К кандидатам закупки' : 'К списку компаний'}</TextLink></div>
   </>;
 }

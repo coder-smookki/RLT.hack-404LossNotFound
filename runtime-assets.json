@@ -9830,6 +9830,12 @@
       "purpose": "runtime"
     },
     {
+      "path": "local/enrichment-s9-r4-2026-10-02/supplier_profiles_r4.sqlite",
+      "bytes": 135561216,
+      "sha256": "ff95cfa58259f9c6dbb2ebfda67cf810831e4da90f2b1199812fd30b19893d32",
+      "purpose": "runtime"
+    },
+    {
       "path": "local/history.sqlite",
       "bytes": 1683234816,
       "sha256": "633706db65a06f346b796eedeb8edff890597a486a592c64a7b600175651c6fc",
