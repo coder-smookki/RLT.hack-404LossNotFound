@@ -1,6 +1,53 @@
-# Подбор контрагентов
+<p align="center">
+  <img src="docs/logo.svg" alt="Подбор контрагентов" width="120">
+</p>
+
+<h1 align="center">Подбор контрагентов</h1>
+
+<p align="center">
+  <a href="#итоги-rlthack"><img alt="RLT.hack: 6 место из 19" src="https://img.shields.io/badge/RLT.hack-6%20%D0%BC%D0%B5%D1%81%D1%82%D0%BE%20%D0%B8%D0%B7%2019-6950E8?style=for-the-badge"></a>
+  <a href="#запуск-через-docker"><img alt="Запуск в Docker" src="https://img.shields.io/badge/%D0%B7%D0%B0%D0%BF%D1%83%D1%81%D0%BA-Docker%20Compose-2496ED?style=for-the-badge&logo=docker&logoColor=white"></a>
+  <img alt="Команда 404: Loss not found" src="https://img.shields.io/badge/%D0%BA%D0%BE%D0%BC%D0%B0%D0%BD%D0%B4%D0%B0-404%3A%20Loss%20not%20found-121316?style=for-the-badge">
+  <br>
+  <img alt="Python" src="https://img.shields.io/badge/Python-3.13-3776AB?style=flat-square&logo=python&logoColor=white">
+  <img alt="Django" src="https://img.shields.io/badge/Django-5.2-092E20?style=flat-square&logo=django&logoColor=white">
+  <img alt="PostgreSQL" src="https://img.shields.io/badge/PostgreSQL-16-4169E1?style=flat-square&logo=postgresql&logoColor=white">
+  <img alt="React" src="https://img.shields.io/badge/React-19.3-61DAFB?style=flat-square&logo=react&logoColor=black">
+  <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-7.0-3178C6?style=flat-square&logo=typescript&logoColor=white">
+  <img alt="Vite" src="https://img.shields.io/badge/Vite-8.3-646CFF?style=flat-square&logo=vite&logoColor=white">
+  <img alt="Ранжировщик nnPU35" src="https://img.shields.io/badge/%D1%80%D0%B0%D0%BD%D0%B6%D0%B8%D1%80%D0%BE%D0%B2%D1%89%D0%B8%D0%BA-nnPU35-92B6FF?style=flat-square">
+  <a href="#лицензия"><img alt="Лицензия: все права защищены" src="https://img.shields.io/badge/%D0%BB%D0%B8%D1%86%D0%B5%D0%BD%D0%B7%D0%B8%D1%8F-%D0%B2%D1%81%D0%B5%20%D0%BF%D1%80%D0%B0%D0%B2%D0%B0%20%D0%B7%D0%B0%D1%89%D0%B8%D1%89%D0%B5%D0%BD%D1%8B-B31D28?style=flat-square"></a>
+</p>
+
+<p align="center">
+  Веб-приложение для подбора потенциальных поставщиков по закупкам и позициям ТРУ: загрузка двух CSV, подбор кандидатов по каждому лоту с основаниями по позициям, оценка обоснованности, карточка компании, сравнение и выгрузка в PDF, CSV или JSON
+</p>
+
+<p align="center">
+  <a href="#возможности"><b>Возможности</b></a> ·
+  <a href="#логика-решения"><b>Логика решения</b></a> ·
+  <a href="#результаты-и-метрики"><b>Метрики</b></a> ·
+  <a href="#запуск-через-docker"><b>Запуск</b></a> ·
+  <a href="#api"><b>API</b></a>
+</p>
+
+Хакатон RLT.hack Университета Росэлторг, октябрь 2026, команда **404: Loss not found**.
 
 Веб-приложение команды **404: Loss not found** для подбора потенциальных поставщиков по закупкам и позициям ТРУ. Специалист по закупкам загружает два CSV, проверяет распознанные данные, запускает подбор и получает для каждого лота список кандидатов с основаниями по позициям, оценкой обоснованности, источниками и подробным анализом компании. Результат можно сравнить и выгрузить в PDF, CSV или JSON.
+
+## Итоги RLT.hack
+
+Команда **404: Loss not found** заняла **6 место из 19**. До пятёрки финалистов, которые вышли на финальную защиту, не хватило **1 балла**.
+
+<p align="center">
+  <img src="docs/rlt-results.jpg" alt="Итоговая таблица RLT.hack: 404: Loss not found - 6 место" width="520">
+</p>
+
+## Команда
+
+| Участник | Роль | GitHub |
+|---|---|---|
+| Ильин Кирилл | Разработка | [@coder-smookki](https://github.com/coder-smookki) |
 
 ## Архитектура
 
@@ -192,3 +239,16 @@ PYTHONPATH=src .venv-runtime/bin/python -m unittest discover -s tests
 - Проверка сведений обращается только к известным официальным сайтам. Поиск всех новых компаний в интернете не реализован. Дата получения страницы не равна дате её содержания; окно 36 месяцев - ориентир, а не фильтр.
 
 Лицензии включённых сторонних компонентов указаны в `THIRD_PARTY_NOTICES` и `product/backend/fonts/LICENSE_LIBERATION`.
+
+## Лицензия
+
+© 2026 Ильин Кирилл Русланович. Все права защищены.
+
+«Подбор контрагентов» распространяется под проприетарной лицензией, полный текст - в [LICENSE](LICENSE). Коротко:
+
+- можно смотреть код на GitHub и запускать сборку только для личного ознакомления
+- нельзя использовать решение в коммерции и в собственных целях, копировать, изменять, распространять, переносить код в другие проекты и обучать на нём модели без письменного разрешения автора
+- условия действуют бессрочно, весь срок действия исключительного права
+- сторонние библиотеки и шрифты остаются под своими лицензиями (`THIRD_PARTY_NOTICES`, `product/backend/fonts/LICENSE_LIBERATION`)
+
+Для разрешения на использование - [@coder-smookki](https://github.com/coder-smookki).
